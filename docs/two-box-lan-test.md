@@ -54,16 +54,38 @@ python -m hermes_link init --node-id box-a --name "Hermes Box A" --base-url "htt
 
 ## 5. Pair Box A with Box B
 
+Pairing tokens are disabled by default on `/pair/start`. Create a short-lived token on Box B:
+
+```bash
+python -m hermes_link pair-token create --ttl 300
+```
+
 On Box A:
 
 ```bash
-python -m hermes_link pair http://<box-b-lan-ip>:8765
+python -m hermes_link pair http://<box-b-lan-ip>:8765 --token <token-from-box-b>
 python -m hermes_link nodes
 ```
 
 Expected: `box-b` appears as a paired node.
 
-## 6. Send a harmless task
+If you explicitly want the older request-a-token flow for a short LAN-only pairing window, start Box B with:
+
+```bash
+python -m hermes_link serve --host 0.0.0.0 --port 8765 --pairing-enabled --pairing-window-seconds 300 --allow-pair-node box-a
+```
+
+## 6. Inspect trusted-node plugins
+
+On Box A:
+
+```bash
+python -m hermes_link plugins box-b
+```
+
+Expected: Box B returns installed Hermes plugin information through signed introspection. This data is not exposed on public `/nodes/self`.
+
+## 7. Send a harmless task
 
 On Box A:
 
@@ -73,7 +95,7 @@ python -m hermes_link send box-b "Run date and hostname, then summarize the resu
 
 The command prints a `linktask_...` task id and copy-pasteable status command.
 
-## 7. Poll and fetch result
+## 8. Poll and fetch result
 
 On Box A:
 
@@ -88,7 +110,7 @@ Expected:
 - Result includes Box B's Hermes output.
 - Box B audit log contains task created/running/succeeded events.
 
-## 8. Inspect audit log manually
+## 9. Inspect audit log manually
 
 The state DB is under the Link home, defaulting to `~/.hermes/link/link.db`:
 
@@ -98,16 +120,16 @@ sqlite3 ~/.hermes/link/link.db 'select at,event_type,peer_node_id,task_id,summar
 
 The prompt summary should be a hash by default, not raw sensitive prompt text.
 
-## 9. Stop receiver
+## 10. Stop receiver
 
 Use Ctrl-C in the terminal running `serve`.
 
-## 10. Revoke a pairing
+## 11. Revoke a pairing
 
-v0 stores pairings in SQLite. Until a dedicated `revoke` CLI lands, remove the pairing manually on the receiver or sender:
+Remove the pairing on the receiver or sender:
 
 ```bash
-sqlite3 ~/.hermes/link/link.db "delete from pairings where peer_node_id='box-a';"
+python -m hermes_link revoke box-a
 ```
 
 Repeat with the opposite peer id on the other node if needed.
