@@ -11,14 +11,18 @@ Use this checklist before using Hermes Link beyond a local two-box LAN test.
 - [x] LAN bind requires an explicit `--host 0.0.0.0` or interface flag.
 - [x] Remote task timeout is enforced.
 - [x] Hermes task execution uses argv lists and no shell invocation.
-- [x] Pairing token is one-time and removed after use.
+- [x] `/pair/start` is disabled by default.
+- [x] Pairing tokens are one-time and expire.
+- [x] Manual `pair-token create --ttl <seconds>` exists.
+- [x] Optional `--allow-pair-node` limits which node IDs may complete pairing.
 - [x] No secrets in audit logs; only token prefixes or prompt hashes are recorded.
 - [x] Task prompt logged only as a hash by default; raw prompt logging must be explicit in future versions.
-- [x] Pairing revocation is documented in the two-box guide.
-- [ ] Dedicated `revoke` CLI exists.
+- [x] Dedicated `revoke` CLI exists.
+- [x] Signed remote plugin introspection exists for paired nodes.
+- [x] Plugin inventory is not exposed on public `/nodes/self`.
 - [ ] Per-peer permission levels beyond `dispatch` exist.
-- [ ] Optional TLS or reverse-proxy deployment guide exists for non-LAN use.
+- [x] Cloudflare Tunnel deployment guide exists for non-LAN use.
 
 ## v0 operational rule
 
-Do not expose the Link receiver to the public internet. Use it on a trusted LAN or over a private tunnel/VPN only.
+Do not expose the Link receiver directly to the public internet. Use it on a trusted LAN, over a private tunnel/VPN, or behind a reverse proxy such as Cloudflare Tunnel with Access controls. See `docs/cloudflare-tunnel-vps.md`.

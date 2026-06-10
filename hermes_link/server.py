@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import json
-from pathlib import Path
 import secrets
 import threading
 from urllib.parse import urlparse
@@ -11,6 +10,7 @@ from .audit import safe_prompt_summary
 from .config import LinkConfig, LinkPaths
 from .crypto import NODE_HEADER, verify_request_signature
 from .executor import run_hermes_task
+from .introspection import list_plugins
 from .models import LinkTask, NodeRecord, PairingRecord, utc_now
 from .protocol import json_response, node_public_dict, parse_json_body, task_public_dict
 from .store import LinkStore
@@ -20,11 +20,19 @@ class LinkHTTPServer(HTTPServer):
     allow_reuse_address = True
 
 
-def make_handler(paths: LinkPaths, config: LinkConfig, store: LinkStore):
+def make_handler(
+    paths: LinkPaths,
+    config: LinkConfig,
+    store: LinkStore,
+    *,
+    pairing_enabled: bool = False,
+    pairing_token_ttl_seconds: int = 300,
+    allowed_pair_nodes: set[str] | None = None,
+):
     store.init_schema()
     self_node = NodeRecord(config.node_id, config.display_name, config.base_url, config.capabilities or {})
     store.upsert_node(self_node)
-    pairing_tokens: dict[str, dict] = {}
+    allowed_pair_nodes = set(allowed_pair_nodes or set())
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "HermesLink/0.1"
@@ -70,6 +78,14 @@ def make_handler(paths: LinkPaths, config: LinkConfig, store: LinkStore):
                 return self._json(200, {"ok": True, "service": "hermes-link"})
             if path == "/nodes/self":
                 return self._json(200, node_public_dict(self_node))
+            if path == "/introspect/plugins":
+                ok, peer = self._require_signed(b"")
+                if not ok:
+                    return self._json(401, {"error": "unauthorized"})
+                result = list_plugins()
+                store.add_audit(f"introspect.plugins.{result.status}", peer_node_id=peer, summary=result.status)
+                status = 200 if result.status == "ok" else 500
+                return self._json(status, result.data)
             if path.startswith("/tasks/"):
                 ok, _peer = self._require_signed(b"")
                 if not ok:
@@ -92,21 +108,29 @@ def make_handler(paths: LinkPaths, config: LinkConfig, store: LinkStore):
                 return self._json(400, {"error": str(exc)})
 
             if path == "/pair/start":
+                if not pairing_enabled:
+                    store.add_audit("pair.start_rejected", summary="pairing disabled")
+                    return self._json(403, {"error": "pairing disabled"})
                 token = secrets.token_urlsafe(24)
-                pairing_tokens[token] = {"created_at": utc_now()}
-                store.add_audit("pair.start", summary="pairing token created", details={"token_prefix": token[:4]})
-                return self._json(200, {"pairing_token": token, "node": node_public_dict(self_node)})
+                token_row = store.create_pairing_token(token, pairing_token_ttl_seconds)
+                store.add_audit("pair.start", summary="pairing token created", details={"token_prefix": token[:4], "expires_at": token_row["expires_at"]})
+                return self._json(200, {"pairing_token": token, "expires_at": token_row["expires_at"], "node": node_public_dict(self_node)})
 
             if path == "/pair/complete":
                 token = data.get("pairing_token")
-                if not token or token not in pairing_tokens:
-                    return self._json(401, {"error": "invalid pairing token"})
                 peer_node_id = data.get("node_id")
                 peer_base_url = data.get("base_url")
                 shared_secret = data.get("shared_secret") or secrets.token_urlsafe(32)
                 if not peer_node_id or not peer_base_url:
                     return self._json(400, {"error": "node_id and base_url are required"})
-                del pairing_tokens[token]
+                if allowed_pair_nodes and peer_node_id not in allowed_pair_nodes:
+                    store.add_audit("pair.peer_rejected", peer_node_id=peer_node_id, summary="node not allowed")
+                    return self._json(403, {"error": "node not allowed for pairing"})
+                ok, reason = store.consume_pairing_token(token) if token else (False, "invalid")
+                if not ok:
+                    event = "pair.token_expired" if reason == "expired" else "pair.token_rejected"
+                    store.add_audit(event, summary=reason, details={"token_prefix": str(token or "")[:4]})
+                    return self._json(401, {"error": "invalid pairing token"})
                 store.upsert_pairing(PairingRecord(peer_node_id, peer_base_url, shared_secret, "dispatch"))
                 store.upsert_node(NodeRecord(peer_node_id, data.get("display_name", peer_node_id), peer_base_url, data.get("capabilities") or {}))
                 store.add_audit("pair.complete", peer_node_id=peer_node_id, summary="paired node")
@@ -143,9 +167,25 @@ def make_handler(paths: LinkPaths, config: LinkConfig, store: LinkStore):
     return Handler
 
 
-def serve(paths: LinkPaths, config: LinkConfig, host: str, port: int) -> LinkHTTPServer:
+def serve(
+    paths: LinkPaths,
+    config: LinkConfig,
+    host: str,
+    port: int,
+    *,
+    pairing_enabled: bool = False,
+    pairing_token_ttl_seconds: int = 300,
+    allowed_pair_nodes: set[str] | None = None,
+) -> LinkHTTPServer:
     store = LinkStore(paths.db_path)
-    handler = make_handler(paths, config, store)
+    handler = make_handler(
+        paths,
+        config,
+        store,
+        pairing_enabled=pairing_enabled,
+        pairing_token_ttl_seconds=pairing_token_ttl_seconds,
+        allowed_pair_nodes=allowed_pair_nodes,
+    )
     server = LinkHTTPServer((host, port), handler)
     server.serve_forever()
     return server

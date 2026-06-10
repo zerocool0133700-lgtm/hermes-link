@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import secrets
 import sys
 import urllib.error
 import urllib.request
@@ -9,13 +10,12 @@ import urllib.request
 from .config import LinkConfig, default_capabilities, load_config, resolve_paths, save_config
 from .crypto import generate_secret, sign_request
 from .models import NodeRecord, PairingRecord
-from .protocol import node_public_dict
 from .server import serve
 from .store import LinkStore
 
 
 def _with_home(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
-    parser.add_argument("--home", help="Hermes Link home directory, defaults to $HERMES_LINK_HOME or $HERMES_HOME/link")
+    parser.add_argument("--home", default=argparse.SUPPRESS, help="Hermes Link home directory, defaults to $HERMES_LINK_HOME or $HERMES_HOME/link")
     return parser
 
 
@@ -33,12 +33,26 @@ def build_parser() -> argparse.ArgumentParser:
     p_serve = _with_home(sub.add_parser("serve", help="run the Link HTTP receiver"))
     p_serve.add_argument("--host", default="127.0.0.1")
     p_serve.add_argument("--port", type=int, default=8765)
+    p_serve.add_argument("--pairing-enabled", action="store_true", help="allow /pair/start to create short-lived pairing tokens")
+    p_serve.add_argument("--pairing-window-seconds", type=int, default=300, help="TTL for tokens created by /pair/start")
+    p_serve.add_argument("--allow-pair-node", action="append", default=[], help="node_id allowed to complete pairing; repeat for multiple nodes")
+
+    p_pair_token = sub.add_parser("pair-token", help="manage manual pairing tokens")
+    pair_token_sub = p_pair_token.add_subparsers(dest="pair_token_command", required=True)
+    p_pair_token_create = _with_home(pair_token_sub.add_parser("create", help="create a one-time pairing token"))
+    p_pair_token_create.add_argument("--ttl", type=int, default=300, help="token TTL in seconds")
 
     p_pair = _with_home(sub.add_parser("pair", help="pair with another Link node"))
     p_pair.add_argument("node_url")
-    p_pair.add_argument("--token", help="pairing token from remote /pair/start; if omitted, Link requests one")
+    p_pair.add_argument("--token", help="pairing token from remote pair-token create or /pair/start; if omitted, Link requests one")
 
     _with_home(sub.add_parser("nodes", help="list self and paired nodes"))
+
+    p_revoke = _with_home(sub.add_parser("revoke", help="remove a paired node"))
+    p_revoke.add_argument("node")
+
+    p_plugins = _with_home(sub.add_parser("plugins", help="list installed Hermes plugins on a paired node"))
+    p_plugins.add_argument("node")
 
     p_send = _with_home(sub.add_parser("send", help="send a task to a paired node"))
     p_send.add_argument("node")
@@ -95,6 +109,15 @@ def cmd_init(args) -> int:
     return 0
 
 
+def cmd_pair_token_create(args) -> int:
+    _paths, store, _config = _store_and_config(args.home)
+    token = secrets.token_urlsafe(24)
+    store.create_pairing_token(token, args.ttl)
+    store.add_audit("pair.token_created", summary="manual pairing token created", details={"token_prefix": token[:4], "ttl_seconds": args.ttl})
+    print(token)
+    return 0
+
+
 def cmd_nodes(args) -> int:
     paths, store, config = _store_and_config(args.home)
     print(f"Self: {config.node_id} ({config.display_name}) {config.base_url}")
@@ -126,7 +149,6 @@ def cmd_pair(args) -> int:
     }
     complete = _json_request("POST", remote + "/pair/complete", payload)
     node = complete["node"]
-    # If receiver returns its own generated secret prefer the one both sides now know.
     shared_secret = complete.get("shared_secret", shared_secret)
     store.upsert_pairing(PairingRecord(node["node_id"], remote, shared_secret, "dispatch"))
     store.upsert_node(NodeRecord(node["node_id"], node.get("display_name", node["node_id"]), remote, node.get("capabilities") or {}))
@@ -134,11 +156,38 @@ def cmd_pair(args) -> int:
     return 0
 
 
+def _get_pairing_or_error(store: LinkStore, node: str) -> PairingRecord | None:
+    pairing = store.get_pairing(node)
+    if not pairing:
+        print(f"unknown paired node: {node}", file=sys.stderr)
+        return None
+    return pairing
+
+
+def cmd_revoke(args) -> int:
+    _paths, store, _config = _store_and_config(args.home)
+    if not store.delete_pairing(args.node):
+        print(f"unknown paired node: {args.node}", file=sys.stderr)
+        return 2
+    store.add_audit("pair.revoked", peer_node_id=args.node, summary="pairing revoked")
+    print(f"Revoked pairing with {args.node}")
+    return 0
+
+
+def cmd_plugins(args) -> int:
+    _paths, store, config = _store_and_config(args.home)
+    pairing = _get_pairing_or_error(store, args.node)
+    if not pairing:
+        return 2
+    data = _signed_request(config, pairing, "GET", "/introspect/plugins")
+    print(json.dumps(data, indent=2, sort_keys=True))
+    return 0
+
+
 def cmd_send(args) -> int:
     paths, store, config = _store_and_config(args.home)
-    pairing = store.get_pairing(args.node)
+    pairing = _get_pairing_or_error(store, args.node)
     if not pairing:
-        print(f"unknown paired node: {args.node}", file=sys.stderr)
         return 2
     options = {k: v for k, v in {"timeout_seconds": args.timeout_seconds, "profile": args.profile, "toolsets": args.toolsets, "workdir": args.workdir}.items() if v is not None}
     result = _signed_request(config, pairing, "POST", "/tasks", {"prompt": args.prompt, "options": options})
@@ -176,12 +225,26 @@ def main(argv: list[str] | None = None) -> int:
             paths, _store, config = _store_and_config(args.home)
             config = LinkConfig(config.node_id, config.display_name, f"http://{args.host}:{args.port}", config.capabilities)
             print(f"Hermes Link serving {config.node_id} on {args.host}:{args.port}")
-            serve(paths, config, args.host, args.port)
+            serve(
+                paths,
+                config,
+                args.host,
+                args.port,
+                pairing_enabled=args.pairing_enabled,
+                pairing_token_ttl_seconds=args.pairing_window_seconds,
+                allowed_pair_nodes=set(args.allow_pair_node or []),
+            )
             return 0
+        if args.command == "pair-token" and args.pair_token_command == "create":
+            return cmd_pair_token_create(args)
         if args.command == "pair":
             return cmd_pair(args)
         if args.command == "nodes":
             return cmd_nodes(args)
+        if args.command == "revoke":
+            return cmd_revoke(args)
+        if args.command == "plugins":
+            return cmd_plugins(args)
         if args.command == "send":
             return cmd_send(args)
         if args.command == "status":

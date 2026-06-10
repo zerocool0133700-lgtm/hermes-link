@@ -33,8 +33,20 @@ hermes link nodes
 hermes link send <node> "<task>"
 hermes link status <task-id>
 hermes link result <task-id>
+hermes link plugins <node>
+hermes link revoke <node>
 ```
 
 ## Design principle
 
 Start as a small explicit two-node connector, not a magical distributed brain. Pairing, permissions, audit logs, and least-privilege dispatch come before automatic routing.
+
+## Current safety defaults
+
+- The receiver binds to `127.0.0.1` by default.
+- `/pair/start` is disabled by default; use `pair-token create --ttl 300` or explicitly start a short pairing window.
+- Pairing tokens are one-time and expire.
+- Signed requests are required for task dispatch, task results, and remote introspection.
+- Installed plugin inventory is available only through signed introspection (`plugins <node>`), not public `/nodes/self`.
+
+For public VPS usage, see `docs/cloudflare-tunnel-vps.md`.

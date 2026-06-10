@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import sqlite3
 from typing import Any
 
 from .models import LinkTask, NodeRecord, PairingRecord, utc_now
+
+
+def _parse_utc(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
 class LinkStore:
@@ -36,6 +41,12 @@ class LinkStore:
                   shared_secret text not null,
                   trust_level text not null,
                   created_at text not null
+                );
+                create table if not exists pairing_tokens(
+                  token text primary key,
+                  created_at text not null,
+                  expires_at text not null,
+                  used_at text
                 );
                 create table if not exists tasks(
                   task_id text primary key,
@@ -118,6 +129,40 @@ class LinkStore:
         with self._connect() as conn:
             rows = conn.execute("select * from pairings order by peer_node_id").fetchall()
         return [self._row_to_pairing(row) for row in rows]
+
+    def delete_pairing(self, peer_node_id: str) -> bool:
+        with self._connect() as conn:
+            cur = conn.execute("delete from pairings where peer_node_id=?", (peer_node_id,))
+        return cur.rowcount > 0
+
+    def create_pairing_token(self, token: str, ttl_seconds: int) -> dict[str, Any]:
+        now_dt = datetime.now(timezone.utc).replace(microsecond=0)
+        expires_dt = now_dt + timedelta(seconds=ttl_seconds)
+        created_at = now_dt.isoformat().replace("+00:00", "Z")
+        expires_at = expires_dt.isoformat().replace("+00:00", "Z")
+        with self._connect() as conn:
+            conn.execute(
+                "insert into pairing_tokens(token, created_at, expires_at, used_at) values (?, ?, ?, null)",
+                (token, created_at, expires_at),
+            )
+        return {"token": token, "created_at": created_at, "expires_at": expires_at, "used_at": None}
+
+    def get_pairing_token(self, token: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute("select * from pairing_tokens where token=?", (token,)).fetchone()
+        return dict(row) if row else None
+
+    def consume_pairing_token(self, token: str) -> tuple[bool, str]:
+        row = self.get_pairing_token(token)
+        if not row:
+            return False, "invalid"
+        if row["used_at"]:
+            return False, "used"
+        if _parse_utc(row["expires_at"]) < datetime.now(timezone.utc):
+            return False, "expired"
+        with self._connect() as conn:
+            cur = conn.execute("update pairing_tokens set used_at=? where token=? and used_at is null", (utc_now(), token))
+        return (cur.rowcount == 1, "ok" if cur.rowcount == 1 else "used")
 
     def create_task(self, task: LinkTask) -> None:
         with self._connect() as conn:

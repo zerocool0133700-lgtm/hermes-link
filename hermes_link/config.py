@@ -55,4 +55,10 @@ def load_config(paths: LinkPaths) -> LinkConfig:
 
 
 def default_capabilities(max_task_seconds: int = 600) -> dict[str, Any]:
-    return {"profiles": ["default"], "toolsets": [], "max_task_seconds": max_task_seconds}
+    return {
+        "profiles": ["default"],
+        "toolsets": [],
+        "max_task_seconds": max_task_seconds,
+        "introspection": True,
+        "introspection_kinds": ["plugins"],
+    }
