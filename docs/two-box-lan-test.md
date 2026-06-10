@@ -1,6 +1,6 @@
-# Hermes Link two-box LAN test
+# Hermes Link LAN pairing test
 
-This guide verifies Hermes Link with two Hermes boxes on the same LAN.
+This guide verifies Hermes Link with two Hermes boxes on the same LAN. Repeat the pairing steps for each additional LAN node, such as a Windows/Jarvis box, to grow a small trusted mesh.
 
 ## Terms
 
@@ -69,6 +69,10 @@ python -m hermes_link nodes
 
 Expected: `box-b` appears as a paired node.
 
+Pairing direction rule: the node being paired into creates the token. If Box B later needs to pair back into Box A, create the token on Box A and run the `pair` command from Box B.
+
+Troubleshooting: if the token is rejected as invalid, make sure it was created with the same `--home` path used by the running receiver service. Creating a token in a different Link home creates a valid-looking token that the service cannot see.
+
 If you explicitly want the older request-a-token flow for a short LAN-only pairing window, start Box B with:
 
 ```bash
@@ -110,7 +114,17 @@ Expected:
 - Result includes Box B's Hermes output.
 - Box B audit log contains task created/running/succeeded events.
 
-## 9. Inspect audit log manually
+## 9. Optional: verify mesh inventory
+
+When the receiver has the mesh endpoint, a trusted node can ask for its signed node inventory:
+
+```bash
+python -m hermes_link mesh nodes box-b
+```
+
+Expected: the response includes `nodes` with relationship labels such as `self`, `direct`, and `known`.
+
+## 10. Inspect audit log manually
 
 The state DB is under the Link home, defaulting to `~/.hermes/link/link.db`:
 
@@ -120,11 +134,11 @@ sqlite3 ~/.hermes/link/link.db 'select at,event_type,peer_node_id,task_id,summar
 
 The prompt summary should be a hash by default, not raw sensitive prompt text.
 
-## 10. Stop receiver
+## 11. Stop receiver
 
 Use Ctrl-C in the terminal running `serve`.
 
-## 11. Revoke a pairing
+## 12. Revoke a pairing
 
 Remove the pairing on the receiver or sender:
 

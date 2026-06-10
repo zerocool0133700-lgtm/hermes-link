@@ -20,6 +20,14 @@ def json_bytes(data: dict[str, Any], status: int = 200) -> bytes:
     return json.dumps(data, sort_keys=True).encode() + b"\n"
 
 
+def _text(value: Any) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    if value is None:
+        return ""
+    return str(value)
+
+
 def json_response(handler, status: int, data: dict[str, Any]) -> None:
     payload = json_bytes(data)
     handler.send_response(status)
@@ -44,5 +52,5 @@ def task_public_dict(task: LinkTask, include_result: bool = False) -> dict[str, 
         "exit_code": task.exit_code,
     }
     if include_result:
-        data.update({"stdout": task.stdout, "stderr": task.stderr})
+        data.update({"stdout": _text(task.stdout), "stderr": _text(task.stderr)})
     return data

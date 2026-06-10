@@ -86,6 +86,27 @@ def make_handler(
                 store.add_audit(f"introspect.plugins.{result.status}", peer_node_id=peer, summary=result.status)
                 status = 200 if result.status == "ok" else 500
                 return self._json(status, result.data)
+            if path == "/mesh/nodes":
+                ok, peer = self._require_signed(b"")
+                if not ok:
+                    return self._json(401, {"error": "unauthorized"})
+                nodes_by_id = {node.node_id: node_public_dict(node) for node in store.list_nodes()}
+                direct_pairings = {pairing.peer_node_id: pairing for pairing in store.list_pairings()}
+                for peer_node_id, pairing in direct_pairings.items():
+                    nodes_by_id.setdefault(
+                        peer_node_id,
+                        {
+                            "node_id": peer_node_id,
+                            "display_name": peer_node_id,
+                            "base_url": pairing.peer_base_url,
+                            "capabilities": {},
+                        },
+                    )
+                nodes = [nodes_by_id[node_id] for node_id in sorted(nodes_by_id)]
+                for node in nodes:
+                    node["relationship"] = "self" if node["node_id"] == self_node.node_id else "direct" if node["node_id"] in direct_pairings else "known"
+                store.add_audit("mesh.nodes.listed", peer_node_id=peer, summary=f"returned {len(nodes)} nodes")
+                return self._json(200, {"nodes": nodes})
             if path.startswith("/tasks/"):
                 ok, _peer = self._require_signed(b"")
                 if not ok:

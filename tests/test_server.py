@@ -184,3 +184,34 @@ def test_unsigned_plugins_introspection_is_rejected(tmp_path, monkeypatch):
             raise AssertionError("unsigned introspection should fail")
     finally:
         server.shutdown()
+
+
+def test_signed_mesh_nodes_returns_known_nodes(tmp_path, monkeypatch):
+    server, base = start_server(tmp_path, monkeypatch)
+    store = LinkStore(tmp_path / "link.db")
+    from hermes_link.models import NodeRecord
+
+    store.upsert_node(NodeRecord("vps-link", "VPS Link", "https://vps-link.ellie-labs.dev", {"role": "rendezvous"}))
+    try:
+        status, data = request("GET", base + "/mesh/nodes", headers=signed_headers("GET", "/mesh/nodes"))
+        assert status == 200
+        nodes = {node["node_id"]: node for node in data["nodes"]}
+        assert nodes["box-b"]["relationship"] == "self"
+        assert nodes["box-a"]["relationship"] == "direct"
+        assert nodes["vps-link"]["relationship"] == "known"
+        assert nodes["vps-link"]["base_url"] == "https://vps-link.ellie-labs.dev"
+    finally:
+        server.shutdown()
+
+
+def test_unsigned_mesh_nodes_is_rejected(tmp_path, monkeypatch):
+    server, base = start_server(tmp_path, monkeypatch)
+    try:
+        try:
+            request("GET", base + "/mesh/nodes")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 401
+        else:
+            raise AssertionError("unsigned mesh inventory should fail")
+    finally:
+        server.shutdown()

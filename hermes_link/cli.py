@@ -46,6 +46,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_pair.add_argument("node_url")
     p_pair.add_argument("--token", help="pairing token from remote pair-token create or /pair/start; if omitted, Link requests one")
 
+    p_enroll = _with_home(sub.add_parser("enroll", help="enroll this node with a Hermes Link hub"))
+    p_enroll.add_argument("hub_url")
+    p_enroll.add_argument("--token", required=True, help="one-time enrollment token from the hub")
+
     _with_home(sub.add_parser("nodes", help="list self and paired nodes"))
 
     p_revoke = _with_home(sub.add_parser("revoke", help="remove a paired node"))
@@ -53,6 +57,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_plugins = _with_home(sub.add_parser("plugins", help="list installed Hermes plugins on a paired node"))
     p_plugins.add_argument("node")
+
+    p_mesh = sub.add_parser("mesh", help="inspect signed mesh inventory from a paired node")
+    mesh_sub = p_mesh.add_subparsers(dest="mesh_command", required=True)
+    p_mesh_nodes = _with_home(mesh_sub.add_parser("nodes", help="list nodes known by a paired mesh node"))
+    p_mesh_nodes.add_argument("node")
 
     p_send = _with_home(sub.add_parser("send", help="send a task to a paired node"))
     p_send.add_argument("node")
@@ -69,6 +78,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_result = _with_home(sub.add_parser("result", help="fetch remote task result"))
     p_result.add_argument("task_id")
     p_result.add_argument("--node")
+
+    p_worker = _with_home(sub.add_parser("worker", help="run a polling worker against an enrolled Hermes Link hub"))
+    p_worker.add_argument("--hub", default=None, help="paired hub node id; defaults to the only hub pairing or first pairing")
+    p_worker.add_argument("--once", action="store_true", help="poll once and exit")
+    p_worker.add_argument("--interval", type=float, default=5.0, help="poll interval in seconds")
 
     return parser
 
@@ -156,6 +170,39 @@ def cmd_pair(args) -> int:
     return 0
 
 
+def cmd_enroll(args) -> int:
+    paths, store, config = _store_and_config(args.home)
+    hub = args.hub_url.rstrip("/")
+    shared_secret = generate_secret()
+    payload = {
+        "token": args.token,
+        "enrollment_token": args.token,
+        "pairing_token": args.token,
+        "node_id": config.node_id,
+        "display_name": config.display_name,
+        "base_url": config.base_url,
+        "capabilities": config.capabilities or {},
+        "shared_secret": shared_secret,
+    }
+    complete = _json_request("POST", hub + "/enroll", payload)
+    node = complete.get("node") or complete.get("hub") or {}
+    hub_node_id = complete.get("hub_node_id") or node.get("node_id") or complete.get("node_id") or "hub"
+    hub_display_name = complete.get("hub_display_name") or node.get("display_name") or complete.get("display_name") or hub_node_id
+    hub_base_url = complete.get("hub_base_url") or node.get("base_url") or complete.get("base_url") or hub
+    if hub_node_id == config.node_id and hub_base_url == config.base_url:
+        hub_node_id = "dave-link-hub"
+        hub_display_name = "Dave Link Hub"
+        hub_base_url = hub
+    shared_secret = complete.get("shared_secret") or complete.get("worker_secret") or complete.get("secret") or complete.get("hmac_secret") or shared_secret
+    trust_level = complete.get("trust_level", "hub")
+    store.upsert_pairing(PairingRecord(hub_node_id, hub_base_url, shared_secret, trust_level))
+    store.upsert_node(NodeRecord(hub_node_id, hub_display_name, hub_base_url, complete.get("capabilities") or node.get("capabilities") or {}))
+    store.add_audit("hub.enrolled", peer_node_id=hub_node_id, summary="enrolled with hub", details={"hub_url": hub})
+    print(f"Enrolled with {hub_node_id} at {hub_base_url}")
+    print(f"Worker: python -m hermes_link --home {paths.link_home} worker --hub {hub_node_id}")
+    return 0
+
+
 def _get_pairing_or_error(store: LinkStore, node: str) -> PairingRecord | None:
     pairing = store.get_pairing(node)
     if not pairing:
@@ -180,6 +227,16 @@ def cmd_plugins(args) -> int:
     if not pairing:
         return 2
     data = _signed_request(config, pairing, "GET", "/introspect/plugins")
+    print(json.dumps(data, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_mesh_nodes(args) -> int:
+    _paths, store, config = _store_and_config(args.home)
+    pairing = _get_pairing_or_error(store, args.node)
+    if not pairing:
+        return 2
+    data = _signed_request(config, pairing, "GET", "/mesh/nodes")
     print(json.dumps(data, indent=2, sort_keys=True))
     return 0
 
@@ -215,6 +272,37 @@ def cmd_status_or_result(args, include_result: bool) -> int:
     return 0
 
 
+def cmd_worker(args) -> int:
+    import time
+
+    _paths, store, config = _store_and_config(args.home)
+    pairing = _find_pairing_for_task(store, args.hub)
+    if not pairing:
+        print("specify --hub when zero or multiple pairings exist", file=sys.stderr)
+        return 2
+    claim_paths = ["/worker", "/worker/next", "/tasks/claim", "/claim"]
+    print(f"Hermes Link worker polling {pairing.peer_node_id} at {pairing.peer_base_url}")
+    while True:
+        claimed = None
+        last_error = None
+        for path in claim_paths:
+            try:
+                claimed = _signed_request(config, pairing, "POST", path, {"node_id": config.node_id, "capabilities": config.capabilities or {}})
+                print(json.dumps({"path": path, "response": claimed}, indent=2, sort_keys=True))
+                break
+            except urllib.error.HTTPError as exc:
+                body = exc.read().decode(errors="replace")
+                last_error = f"{path}: http {exc.code}: {body}"
+                if exc.code in {404, 405}:
+                    continue
+                continue
+        if claimed is None and last_error:
+            print(last_error, file=sys.stderr)
+        if args.once:
+            return 0
+        time.sleep(max(0.1, args.interval))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -239,18 +327,24 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_pair_token_create(args)
         if args.command == "pair":
             return cmd_pair(args)
+        if args.command == "enroll":
+            return cmd_enroll(args)
         if args.command == "nodes":
             return cmd_nodes(args)
         if args.command == "revoke":
             return cmd_revoke(args)
         if args.command == "plugins":
             return cmd_plugins(args)
+        if args.command == "mesh" and args.mesh_command == "nodes":
+            return cmd_mesh_nodes(args)
         if args.command == "send":
             return cmd_send(args)
         if args.command == "status":
             return cmd_status_or_result(args, include_result=False)
         if args.command == "result":
             return cmd_status_or_result(args, include_result=True)
+        if args.command == "worker":
+            return cmd_worker(args)
     except FileNotFoundError as exc:
         print(f"missing config; run init first ({exc})", file=sys.stderr)
         return 2

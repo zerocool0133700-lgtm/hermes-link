@@ -20,7 +20,7 @@ def test_module_help_mentions_hermes_link():
     result = run_cli("--help")
     assert result.returncode == 0
     assert "Hermes Link" in result.stdout
-    for subcommand in ["init", "serve", "pair", "pair-token", "revoke", "plugins", "nodes", "send", "status", "result"]:
+    for subcommand in ["init", "serve", "pair", "pair-token", "enroll", "revoke", "plugins", "mesh", "nodes", "send", "status", "result", "worker"]:
         assert subcommand in result.stdout
 
 

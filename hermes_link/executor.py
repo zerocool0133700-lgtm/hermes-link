@@ -7,6 +7,14 @@ import subprocess
 from typing import Any
 
 
+def _text(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
+
+
 @dataclass(slots=True)
 class TaskExecutionResult:
     status: str
@@ -43,8 +51,10 @@ def run_hermes_task(prompt: str, options: dict[str, Any] | None = None, max_time
             shell=False,
         )
     except subprocess.TimeoutExpired as exc:
-        return TaskExecutionResult("timed_out", None, exc.stdout or "", f"Task timed out after {timeout} seconds")
+        stderr = _text(exc.stderr)
+        timeout_message = f"Task timed out after {timeout} seconds"
+        return TaskExecutionResult("timed_out", None, _text(exc.stdout), "\n".join(part for part in (stderr, timeout_message) if part))
     except OSError as exc:
         return TaskExecutionResult("failed", None, "", str(exc))
     status = "succeeded" if proc.returncode == 0 else "failed"
-    return TaskExecutionResult(status, proc.returncode, proc.stdout, proc.stderr)
+    return TaskExecutionResult(status, proc.returncode, _text(proc.stdout), _text(proc.stderr))
