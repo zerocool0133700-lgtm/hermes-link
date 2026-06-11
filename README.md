@@ -34,6 +34,8 @@ hermes link send <node> "<task>"
 hermes link status <task-id>
 hermes link result <task-id>
 hermes link plugins <node>
+hermes link profiles list --probe
+hermes link profiles chat link:<node>/<profile> "<message>"
 hermes link revoke <node>
 ```
 
@@ -48,5 +50,6 @@ Start as a small explicit two-node connector, not a magical distributed brain. P
 - Pairing tokens are one-time and expire.
 - Signed requests are required for task dispatch, task results, and remote introspection.
 - Installed plugin inventory is available only through signed introspection (`plugins <node>`), not public `/nodes/self`.
+- Remote profile discovery is signed-only. A remote profile id such as `link:dave-ellie-labs/default` can route a chat turn to that node's Hermes profile while the remote node keeps its own tools, memory, files, and approval policy.
 
 For public VPS usage, see `docs/cloudflare-tunnel-vps.md`.

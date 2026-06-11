@@ -21,6 +21,12 @@ def start_server(tmp_path, monkeypatch, **handler_options):
         "    print(json.dumps([{'name': 'honcho'}, {'name': 'spotify'}]))\n"
         "elif sys.argv[1:3] == ['plugins', 'list']:\n"
         "    print('honcho\\nspotify')\n"
+        "elif sys.argv[1:3] == ['sessions', 'list']:\n"
+        "    print('20260610_abc Good morning session')\n"
+        "elif '--resume' in sys.argv:\n"
+        "    print('resumed:' + sys.argv[sys.argv.index('--resume') + 1] + ':' + sys.argv[-1])\n"
+        "elif '--profile' in sys.argv:\n"
+        "    print('profile:' + sys.argv[sys.argv.index('--profile') + 1] + ':' + sys.argv[-1])\n"
         "else:\n"
         "    print('remote ok:' + sys.argv[-1])\n"
     )
@@ -59,6 +65,8 @@ def test_health_and_self_endpoints(tmp_path, monkeypatch):
         status, data = request("GET", base + "/health")
         assert status == 200
         assert data["ok"] is True
+        assert data["service"] == "hermes-link"
+        assert data["link_version"] == "0.1.0"
         status, data = request("GET", base + "/nodes/self")
         assert data["node_id"] == "box-b"
         assert "plugins" not in data
@@ -182,5 +190,61 @@ def test_unsigned_plugins_introspection_is_rejected(tmp_path, monkeypatch):
             assert exc.code == 401
         else:
             raise AssertionError("unsigned introspection should fail")
+    finally:
+        server.shutdown()
+
+
+def test_signed_profiles_endpoint_lists_remote_profiles(tmp_path, monkeypatch):
+    server, base = start_server(tmp_path, monkeypatch)
+    try:
+        status, data = request("GET", base + "/profiles", headers=signed_headers("GET", "/profiles"))
+        assert status == 200
+        assert data["kind"] == "profiles"
+        assert data["node_id"] == "box-b"
+        assert data["profiles"] == [
+            {
+                "remote_profile_id": "link:box-b/default",
+                "node_id": "box-b",
+                "node_display_name": "Box B",
+                "profile": "default",
+                "display_name": "Box B / default",
+                "capabilities": {"chat": True, "sessions": False, "files": False},
+            }
+        ]
+    finally:
+        server.shutdown()
+
+
+def test_unsigned_profiles_endpoint_is_rejected(tmp_path, monkeypatch):
+    server, base = start_server(tmp_path, monkeypatch)
+    try:
+        try:
+            request("GET", base + "/profiles")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 401
+        else:
+            raise AssertionError("unsigned profile discovery should fail")
+    finally:
+        server.shutdown()
+
+
+def test_task_can_target_remote_profile(tmp_path, monkeypatch):
+    server, base = start_server(tmp_path, monkeypatch)
+    try:
+        body = {"prompt": "hello profile", "options": {"profile": "voice", "timeout_seconds": 5}}
+        raw = json.dumps(body).encode()
+        status, task = request("POST", base + "/tasks", body, signed_headers("POST", "/tasks", raw))
+        assert status == 200
+        task_id = task["task_id"]
+
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            _status, meta = request("GET", base + f"/tasks/{task_id}", headers=signed_headers("GET", f"/tasks/{task_id}"))
+            if meta["status"] in {"succeeded", "failed", "timed_out"}:
+                break
+            time.sleep(0.05)
+        _status, result = request("GET", base + f"/tasks/{task_id}/result", headers=signed_headers("GET", f"/tasks/{task_id}/result"))
+        assert result["status"] == "succeeded"
+        assert "profile:voice:hello profile" in result["stdout"]
     finally:
         server.shutdown()
