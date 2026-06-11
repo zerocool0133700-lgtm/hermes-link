@@ -88,4 +88,4 @@ def run_hermes_task(
 
     stdout, stderr = proc.communicate()
     status = "succeeded" if proc.returncode == 0 else "failed"
-    return TaskExecutionResult(status, proc.returncode, _text(proc.stdout), _text(proc.stderr))
+    return TaskExecutionResult(status, proc.returncode, _text(stdout), _text(stderr))
