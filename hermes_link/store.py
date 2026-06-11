@@ -6,7 +6,7 @@ from pathlib import Path
 import sqlite3
 from typing import Any
 
-from .models import LinkTask, NodeRecord, PairingRecord, utc_now
+from .models import FileRecord, LinkTask, NodeRecord, PairingRecord, utc_now
 
 
 def _parse_utc(value: str) -> datetime:
@@ -75,6 +75,16 @@ class LinkStore:
                   task_id text,
                   summary text not null,
                   details_json text not null
+                );
+                create table if not exists files(
+                  file_id text primary key,
+                  peer_node_id text not null,
+                  filename text not null,
+                  stored_path text not null,
+                  size_bytes integer not null,
+                  sha256 text not null,
+                  mime_type text not null,
+                  created_at text not null
                 );
                 """
             )
@@ -206,6 +216,26 @@ class LinkStore:
                 (utc_now(), event_type, peer_node_id, task_id, summary, json.dumps(details or {}, sort_keys=True)),
             )
 
+    def create_file(self, file: FileRecord) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                insert into files(file_id, peer_node_id, filename, stored_path, size_bytes, sha256, mime_type, created_at)
+                values (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (file.file_id, file.peer_node_id, file.filename, file.stored_path, file.size_bytes, file.sha256, file.mime_type, file.created_at),
+            )
+
+    def get_file(self, file_id: str) -> FileRecord | None:
+        with self._connect() as conn:
+            row = conn.execute("select * from files where file_id=?", (file_id,)).fetchone()
+        return self._row_to_file(row) if row else None
+
+    def list_files(self, limit: int = 50) -> list[FileRecord]:
+        with self._connect() as conn:
+            rows = conn.execute("select * from files order by created_at desc limit ?", (limit,)).fetchall()
+        return [self._row_to_file(row) for row in rows]
+
     def list_audit(self, limit: int = 50) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute("select * from audit order by id desc limit ?", (limit,)).fetchall()
@@ -225,4 +255,12 @@ class LinkStore:
             task_id=row["task_id"], peer_node_id=row["peer_node_id"], prompt=row["prompt"], options=json.loads(row["options_json"]),
             status=row["status"], created_at=row["created_at"], started_at=row["started_at"], finished_at=row["finished_at"],
             exit_code=row["exit_code"], stdout=row["stdout"], stderr=row["stderr"],
+        )
+
+    @staticmethod
+    def _row_to_file(row: sqlite3.Row) -> FileRecord:
+        return FileRecord(
+            file_id=row["file_id"], peer_node_id=row["peer_node_id"], filename=row["filename"],
+            stored_path=row["stored_path"], size_bytes=row["size_bytes"], sha256=row["sha256"],
+            mime_type=row["mime_type"], created_at=row["created_at"],
         )

@@ -20,7 +20,7 @@ def test_module_help_mentions_hermes_link():
     result = run_cli("--help")
     assert result.returncode == 0
     assert "Hermes Link" in result.stdout
-    for subcommand in ["init", "serve", "pair", "pair-token", "enroll", "revoke", "plugins", "mesh", "nodes", "send", "status", "result", "worker"]:
+    for subcommand in ["init", "serve", "pair", "pair-token", "hub", "enroll", "worker", "hub-send", "hub-status", "revoke", "plugins", "mesh", "profiles", "nodes", "introspect", "files", "sessions", "update-check", "send", "status", "result"]:
         assert subcommand in result.stdout
 
 
@@ -94,5 +94,21 @@ def test_plugins_requires_known_paired_node(tmp_path):
     home = tmp_path / "link-home"
     run_cli("init", "--node-id", "box-a", "--name", "Box A", "--home", str(home))
     result = run_cli("plugins", "missing", "--home", str(home))
+    assert result.returncode != 0
+    assert "unknown paired node" in result.stderr.lower()
+
+
+def test_profiles_chat_rejects_non_link_profile_id(tmp_path):
+    home = tmp_path / "link-home"
+    run_cli("init", "--node-id", "box-a", "--name", "Box A", "--home", str(home))
+    result = run_cli("profiles", "chat", "default", "hello", "--home", str(home))
+    assert result.returncode != 0
+    assert "remote profile id" in result.stderr.lower()
+
+
+def test_profiles_chat_requires_known_paired_node(tmp_path):
+    home = tmp_path / "link-home"
+    run_cli("init", "--node-id", "box-a", "--name", "Box A", "--home", str(home))
+    result = run_cli("profiles", "chat", "link:missing/default", "hello", "--home", str(home))
     assert result.returncode != 0
     assert "unknown paired node" in result.stderr.lower()

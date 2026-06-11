@@ -60,5 +60,14 @@ def default_capabilities(max_task_seconds: int = 600) -> dict[str, Any]:
         "toolsets": [],
         "max_task_seconds": max_task_seconds,
         "introspection": True,
-        "introspection_kinds": ["plugins"],
+        "introspection_kinds": ["node", "plugins", "sessions", "update"],
+        "files": {
+            "send": True,
+            "receive": True,
+            "return_artifacts": True,
+            "max_bytes": 10 * 1024 * 1024,
+            "staging_dir": "files/incoming",
+        },
+        "sessions": {"list": True, "chat": True},
+        "link_update": {"check": True, "remote": False},
     }

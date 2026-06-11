@@ -51,3 +51,15 @@ class LinkTask:
             prompt=prompt,
             options=options or {},
         )
+
+
+@dataclass(slots=True)
+class FileRecord:
+    file_id: str
+    peer_node_id: str
+    filename: str
+    stored_path: str
+    size_bytes: int
+    sha256: str
+    mime_type: str = "application/octet-stream"
+    created_at: str = field(default_factory=utc_now)

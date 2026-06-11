@@ -35,6 +35,8 @@ hermes link status <task-id>
 hermes link result <task-id>
 hermes link plugins <node>
 hermes link mesh nodes <node>
+hermes link profiles list --probe
+hermes link profiles chat link:<node>/<profile> "<message>"
 hermes link revoke <node>
 ```
 
@@ -50,6 +52,7 @@ Start as a small explicit two-node connector, not a magical distributed brain. P
 - Signed requests are required for task dispatch, task results, and remote introspection.
 - Signed mesh inventory is available through `mesh nodes <node>` when the remote node has the mesh endpoint.
 - Installed plugin inventory is available only through signed introspection (`plugins <node>`), not public `/nodes/self`.
+- Remote profile discovery is signed-only. A remote profile id such as `link:dave-ellie-labs/default` can route a chat turn to that node's Hermes profile while the remote node keeps its own tools, memory, files, and approval policy.
 
 ## Pairing direction
 

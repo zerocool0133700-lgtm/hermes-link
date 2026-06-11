@@ -89,6 +89,25 @@ python -m hermes_link plugins box-b
 
 Expected: Box B returns installed Hermes plugin information through signed introspection. This data is not exposed on public `/nodes/self`.
 
+## 6a. Discover mesh profiles
+
+On Box A:
+
+```bash
+python -m hermes_link profiles list --probe
+python -m hermes_link profiles list --probe --json
+```
+
+Expected: Box A lists its own local profiles plus signed remote profiles such as `link:box-b/default`.
+
+To route a chat turn to Box B's `default` Hermes profile:
+
+```bash
+python -m hermes_link profiles chat link:box-b/default "Say which Hermes profile handled this turn."
+```
+
+The command prints a `linktask_...` task id and a copy-pasteable result command.
+
 ## 7. Send a harmless task
 
 On Box A:

@@ -41,6 +41,35 @@ def node_public_dict(node: NodeRecord) -> dict[str, Any]:
     return {"node_id": node.node_id, "display_name": node.display_name, "base_url": node.base_url, "capabilities": node.capabilities}
 
 
+def profile_public_dict(node: NodeRecord, profile: str) -> dict[str, Any]:
+    capabilities = node.capabilities or {}
+    sessions = capabilities.get("sessions") or {}
+    files = capabilities.get("files") or {}
+    return {
+        "remote_profile_id": f"link:{node.node_id}/{profile}",
+        "node_id": node.node_id,
+        "node_display_name": node.display_name,
+        "profile": profile,
+        "display_name": f"{node.display_name} / {profile}",
+        "capabilities": {
+            "chat": True,
+            "sessions": bool(sessions.get("chat") or sessions.get("list")),
+            "files": bool(files.get("send") or files.get("receive") or files.get("return_artifacts")),
+        },
+    }
+
+
+def profiles_public_dict(node: NodeRecord) -> dict[str, Any]:
+    capabilities = node.capabilities or {}
+    profiles = capabilities.get("profiles") or ["default"]
+    return {
+        "kind": "profiles",
+        "node_id": node.node_id,
+        "node_display_name": node.display_name,
+        "profiles": [profile_public_dict(node, str(profile)) for profile in profiles],
+    }
+
+
 def task_public_dict(task: LinkTask, include_result: bool = False) -> dict[str, Any]:
     data: dict[str, Any] = {
         "task_id": task.task_id,
